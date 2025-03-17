@@ -1,13 +1,11 @@
 const readline = require('readline');
 const crypto = require('crypto');
 
-// Interface for reading from the console
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 });
 
-// Class for working with dice
 class Dice {
   constructor(sides) {
     this.sides = sides;
@@ -18,39 +16,30 @@ class Dice {
   }
 }
 
-// Class for generating HMAC
 class HMACGenerator {
-  // Генерация случайного ключа
   static generateKey() {
-    return crypto.randomBytes(32); // Генерируем 256-битный ключ
+    return crypto.randomBytes(32);
   }
 
-  // Генерация HMAC на основе ключа и сообщения
   static generate(key, input) {
-    return crypto.createHmac('sha3-256', key)
-      .update(input)
-      .digest('hex'); // Возвращаем HMAC в виде строки
+    return crypto.createHmac('sha3-256', key).update(input).digest('hex');
   }
 }
 
-// Class for fair random number generation
 class FairRandom {
-  // Генерация честного случайного числа на основе HMAC
   static generateNumber(key, range) {
     const random = crypto.randomBytes(32);
-    const hmac = HMACGenerator.generate(key, random); // Генерация HMAC
-    const num = parseInt(hmac, 16); // Преобразуем HMAC в число
-    return num % range; // Модуль для получения числа в пределах диапазона
+    const hmac = HMACGenerator.generate(key, random);
+    const num = parseInt(hmac, 16);
+    return { value: (num % range) + 1, hmac, random: random.toString('hex') };
   }
 }
 
-// Class for calculating probabilities
 class ProbabilityCalculator {
   static calculate(config1, config2) {
     let totalOutcomes = 0;
     let favorableOutcomes = 0;
 
-    // Проходим по всем возможным результатам бросков двух кубиков
     for (let i = 0; i < config1.length; i++) {
       for (let j = 0; j < config2.length; j++) {
         totalOutcomes++;
@@ -60,136 +49,126 @@ class ProbabilityCalculator {
       }
     }
 
-    return favorableOutcomes / totalOutcomes; // Вероятность победы
-  }
-
-  static print(config1, config2) {
-    const probability = this.calculate(config1, config2);
-    console.log(`Probability that the user wins: ${(probability * 100).toFixed(2)}%`);
+    return favorableOutcomes / totalOutcomes;
   }
 }
 
-// Class for helping with displaying probability table
 class Help {
   static printTable(diceConfigs) {
-    const diceNames = diceConfigs.map((config, index) => `Dice ${index + 1}`);
-    console.log(`Probability of the win for the user:`);
-    console.log(`+-------------+${diceNames.join('+')}+`);
-    
+    const diceNames = diceConfigs.map((_, i) => `Dice ${i + 1}`);
+    const colWidth = 10;
+    const separator = "+".padEnd(colWidth * (diceConfigs.length + 1) + diceConfigs.length + 2, "-") + "+";
+
+    console.log("\nProbability Table:");
+    console.log(separator);
+
+    let header = "|".padEnd(colWidth) + diceNames.map(name => name.padEnd(colWidth)).join("|") + "|";
+    console.log(header);
+    console.log(separator);
+
     diceConfigs.forEach((config1, i) => {
-      let row = `| ${diceNames[i]} |`;
-      diceConfigs.forEach((config2, j) => {
-        const prob = ProbabilityCalculator.calculate(config1, config2);
-        row += ` ${(prob).toFixed(4)} |`; // Печать вероятности с точностью до 4 знаков
-      });
-      console.log(row);
+      let row = `| Dice ${i + 1} `.padEnd(colWidth);
+      row += diceConfigs
+        .map(config2 => `${(ProbabilityCalculator.calculate(config1, config2) * 100).toFixed(2)}%`.padEnd(colWidth))
+        .join("|");
+      console.log(row + "|");
     });
+
+    console.log(separator);
   }
 }
 
-// Main game class
 class DiceGame {
   constructor(diceConfigs) {
-    this.hmacKey = HMACGenerator.generateKey(); // Генерация ключа
-    this.round = 1;
+    this.hmacKey = HMACGenerator.generateKey();
     this.scores = { 1: 0, 2: 0 };
     this.diceConfigs = diceConfigs;
   }
 
-  printHelp() {
-    console.log(`
-      Commands:
-      - ? or help: show help
-      - X: exit the game
-    `);
-  }
-
-  startGame() {
-    console.log('The game has started!');
-
-    // Показываем таблицу вероятностей
+  async startGame() {
+    console.log("\nGame started!");
     Help.printTable(this.diceConfigs);
 
-    rl.question('Enter a command or X to exit: ', (input) => {
-      if (input === 'X') {
-        console.log('Game over.');
-        rl.close();
-        return;
+    let round = 1;
+    while (true) {
+      console.log(`\n--- Round ${round} ---`);
+
+      const compRollData = FairRandom.generateNumber(this.hmacKey, 6);
+      console.log(`HMAC: ${compRollData.hmac}`);
+
+      const userChoice = await this.ask(`Choose your dice (index 0-${this.diceConfigs.length - 1}): `);
+      const diceIndex = parseInt(userChoice, 10);
+
+      if (isNaN(diceIndex) || diceIndex < 0 || diceIndex >= this.diceConfigs.length) {
+        console.log("Invalid choice. Try again.");
+        continue;
       }
 
-      if (input === '?' || input === 'help') {
-        this.printHelp();
-        this.startGame();
-        return;
-      }
+      const userDice = this.diceConfigs[diceIndex];
+      const userRoll = userDice[Math.floor(Math.random() * userDice.length)];
+      const compRoll = compRollData.value;
 
-      // Честное случайное число для компьютерного хода
-      const compRoll = FairRandom.generateNumber(this.hmacKey, 6);
-      const userRoll = Math.floor(Math.random() * 6); // Пользовательское число
-
+      console.log(`Your roll: ${userRoll}`);
       console.log(`Computer roll: ${compRoll}`);
-      console.log(`User roll: ${userRoll}`);
+      console.log(`Random value used for HMAC: ${compRollData.random}`);
 
-      // Решаем, кто победил
+      const verifyHMAC = HMACGenerator.generate(this.hmacKey, Buffer.from(compRollData.random, 'hex'));
+      console.log(`Verification HMAC: ${verifyHMAC}`);
+
+      if (verifyHMAC === compRollData.hmac) {
+        console.log("HMAC verification successful!");
+      } else {
+        console.log("HMAC verification failed! Something is wrong.");
+      }
+
       if (userRoll > compRoll) {
-        console.log('You win this round!');
+        console.log("You win this round!");
         this.scores[1]++;
       } else if (userRoll < compRoll) {
-        console.log('Computer wins this round!');
+        console.log("Computer wins this round!");
         this.scores[2]++;
       } else {
-        console.log('It\'s a tie!');
+        console.log("It's a tie!");
       }
 
-      console.log(`Current score: You = ${this.scores[1]}, Computer = ${this.scores[2]}`);
+      console.log(`Score: You = ${this.scores[1]}, Computer = ${this.scores[2]}`);
 
-      rl.question('Do you want to continue? (Y/N): ', (answer) => {
-        if (answer.toUpperCase() === 'Y') {
-          this.startGame();
-        } else {
-          console.log('Game over.');
-          rl.close();
-        }
-      });
-    });
+      const answer = await this.ask("Continue? (Y/N): ");
+      if (answer.toUpperCase() !== "Y") {
+        console.log("Game over.");
+        rl.close();
+        break;
+      }
+      round++;
+    }
+  }
+
+  ask(question) {
+    return new Promise(resolve => rl.question(question, resolve));
   }
 }
 
-// Read dice configuration from command-line arguments
-const args = process.argv.slice(2); // Получаем аргументы из командной строки
-
-// Проверка, что хотя бы один аргумент был передан
+const args = process.argv.slice(2);
 if (args.length < 1) {
-  console.error('Error: You must provide at least one dice configuration.');
+  console.error("Error: You must provide at least one dice configuration.");
   process.exit(1);
 }
 
-const diceConfigs = [];
-
-// Проверка каждого аргумента
-args.forEach((config, index) => {
-  // Разделяем конфигурацию на числа
-  const numbers = config.split(',').map((num) => {
-    const parsed = parseInt(num.trim(), 10); // Преобразуем в число
+const diceConfigs = args.map(config =>
+  config.split(",").map(num => {
+    const parsed = parseInt(num.trim(), 10);
     if (isNaN(parsed) || parsed <= 0) {
-      console.error(`Error: Invalid number "${num}" in configuration ${config}. All numbers must be positive integers.`);
+      console.error(`Error: Invalid number "${num}" in configuration ${config}.`);
       process.exit(1);
     }
     return parsed;
-  });
+  })
+);
 
-  diceConfigs.push(numbers);
-});
+console.log(`\nDice configurations: ${JSON.stringify(diceConfigs)}`);
 
-console.log(`Your dice configurations: ${JSON.stringify(diceConfigs)}`);
-
-// Start the game
 const game = new DiceGame(diceConfigs);
 game.startGame();
-
-
-
-
 
 
 
