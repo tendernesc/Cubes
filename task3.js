@@ -6,16 +6,6 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
-class Dice {
-  constructor(sides) {
-    this.sides = sides;
-  }
-
-  roll() {
-    return Math.floor(Math.random() * this.sides) + 1;
-  }
-}
-
 class HMACGenerator {
   static generateKey() {
     return crypto.randomBytes(32);
@@ -30,8 +20,8 @@ class FairRandom {
   static generateNumber(key, range) {
     const random = crypto.randomBytes(32);
     const hmac = HMACGenerator.generate(key, random);
-    const num = parseInt(hmac, 16);
-    return { value: (num % range) + 1, hmac, random: random.toString('hex') };
+    const num = parseInt(hmac, 16) % range;
+    return { value: num, hmac, random: random.toString('hex') };
   }
 }
 
@@ -39,7 +29,6 @@ class ProbabilityCalculator {
   static calculate(config1, config2) {
     let totalOutcomes = 0;
     let favorableOutcomes = 0;
-
     for (let i = 0; i < config1.length; i++) {
       for (let j = 0; j < config2.length; j++) {
         totalOutcomes++;
@@ -48,33 +37,21 @@ class ProbabilityCalculator {
         }
       }
     }
-
     return favorableOutcomes / totalOutcomes;
   }
 }
 
 class Help {
   static printTable(diceConfigs) {
-    const diceNames = diceConfigs.map((_, i) => `Dice ${i + 1}`);
-    const colWidth = 10;
-    const separator = "+".padEnd(colWidth * (diceConfigs.length + 1) + diceConfigs.length + 2, "-") + "+";
-
     console.log("\nProbability Table:");
-    console.log(separator);
-
-    let header = "|".padEnd(colWidth) + diceNames.map(name => name.padEnd(colWidth)).join("|") + "|";
+    const header = [" ", ...diceConfigs.map((_, i) => `Dice ${i + 1}`)].join(" | ");
     console.log(header);
-    console.log(separator);
-
+    console.log("-".repeat(header.length));
     diceConfigs.forEach((config1, i) => {
-      let row = `| Dice ${i + 1} `.padEnd(colWidth);
-      row += diceConfigs
-        .map(config2 => `${(ProbabilityCalculator.calculate(config1, config2) * 100).toFixed(2)}%`.padEnd(colWidth))
-        .join("|");
-      console.log(row + "|");
+      const row = [`Dice ${i + 1}`, ...diceConfigs.map(config2 => `${(ProbabilityCalculator.calculate(config1, config2) * 100).toFixed(2)}%`)].join(" | ");
+      console.log(row);
     });
-
-    console.log(separator);
+    console.log("-".repeat(header.length));
   }
 }
 
@@ -88,43 +65,32 @@ class DiceGame {
   async startGame() {
     console.log("\nGame started!");
     Help.printTable(this.diceConfigs);
+    
+    console.log("\nLet's determine who makes the first move.");
+    const firstMoveData = FairRandom.generateNumber(this.hmacKey, 2);
+    console.log(`I selected a random value in the range 0..1 (HMAC=${firstMoveData.hmac}).`);
+    console.log("Try to guess my selection.");
+    console.log("0 - 0\n1 - 1\nX - exit\n? - help");
+    
+    const userGuess = await this.ask("Your selection: ");
+    if (userGuess.toUpperCase() === "X") return this.exitGame();
+    if (userGuess.toUpperCase() === "?") return console.log("Help: Guess 0 or 1."), this.startGame();
+    
+    console.log(`My selection: ${firstMoveData.value} (KEY=${this.hmacKey.toString('hex')}).`);
+    
+    const playerStarts = parseInt(userGuess, 10) === firstMoveData.value;
+    console.log(playerStarts ? "You guessed correctly! You go first." : "I make the first move.");
 
-    let round = 1;
     while (true) {
-      console.log(`\n--- Round ${round} ---`);
-
-      const compRollData = FairRandom.generateNumber(this.hmacKey, 6);
-      console.log(`HMAC: ${compRollData.hmac}`);
-
-      const userChoice = await this.ask(`Choose your dice (index 0-${this.diceConfigs.length - 1}): `);
-      const diceIndex = parseInt(userChoice, 10);
-
-      if (isNaN(diceIndex) || diceIndex < 0 || diceIndex >= this.diceConfigs.length) {
-        console.log("Invalid choice. Try again.");
-        continue;
-      }
-
-      const userDice = this.diceConfigs[diceIndex];
-      const userRoll = userDice[Math.floor(Math.random() * userDice.length)];
-      const compRoll = compRollData.value;
-
-      console.log(`Your roll: ${userRoll}`);
-      console.log(`Computer roll: ${compRoll}`);
-      console.log(`Random value used for HMAC: ${compRollData.random}`);
-
-      const verifyHMAC = HMACGenerator.generate(this.hmacKey, Buffer.from(compRollData.random, 'hex'));
-      console.log(`Verification HMAC: ${verifyHMAC}`);
-
-      if (verifyHMAC === compRollData.hmac) {
-        console.log("HMAC verification successful!");
-      } else {
-        console.log("HMAC verification failed! Something is wrong.");
-      }
-
-      if (userRoll > compRoll) {
+      console.log("\n--- New Round ---");
+      const playerRoll = await this.rollDice(1);
+      const computerRoll = await this.rollDice(2);
+      
+      console.log(`Final Results -> You: ${playerRoll}, Computer: ${computerRoll}`);
+      if (playerRoll > computerRoll) {
         console.log("You win this round!");
         this.scores[1]++;
-      } else if (userRoll < compRoll) {
+      } else if (playerRoll < computerRoll) {
         console.log("Computer wins this round!");
         this.scores[2]++;
       } else {
@@ -132,19 +98,36 @@ class DiceGame {
       }
 
       console.log(`Score: You = ${this.scores[1]}, Computer = ${this.scores[2]}`);
-
       const answer = await this.ask("Continue? (Y/N): ");
-      if (answer.toUpperCase() !== "Y") {
-        console.log("Game over.");
-        rl.close();
-        break;
-      }
-      round++;
+      if (answer.toUpperCase() !== "Y") return this.exitGame();
     }
+  }
+
+  async rollDice(player) {
+    console.log(player === 1 ? "It's time for your roll." : "It's time for my roll.");
+    const rollData = FairRandom.generateNumber(this.hmacKey, 6);
+    console.log(`I selected a random value in the range 0..5 (HMAC=${rollData.hmac}).`);
+    console.log("Add your number modulo 6.");
+    console.log("0 - 0\n1 - 1\n2 - 2\n3 - 3\n4 - 4\n5 - 5\nX - exit\n? - help");
+    
+    const userChoice = await this.ask("Your selection: ");
+    if (userChoice.toUpperCase() === "X") return this.exitGame();
+    if (userChoice.toUpperCase() === "?") return console.log("Help: Choose a number between 0 and 5."), this.rollDice(player);
+    
+    const userNum = parseInt(userChoice, 10);
+    console.log(`My number is ${rollData.value} (KEY=${this.hmacKey.toString('hex')}).`);
+    const finalRoll = (rollData.value + userNum) % 6;
+    console.log(`The fair number generation result is ${rollData.value} + ${userNum} = ${finalRoll} (mod 6).`);
+    return finalRoll;
   }
 
   ask(question) {
     return new Promise(resolve => rl.question(question, resolve));
+  }
+
+  exitGame() {
+    console.log("Game over.");
+    rl.close();
   }
 }
 
@@ -169,6 +152,9 @@ console.log(`\nDice configurations: ${JSON.stringify(diceConfigs)}`);
 
 const game = new DiceGame(diceConfigs);
 game.startGame();
+
+
+
 
 
 
