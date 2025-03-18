@@ -65,19 +65,19 @@ class DiceGame {
   async startGame() {
     console.log("\nGame started!");
     Help.printTable(this.diceConfigs);
-    
+
     console.log("\nLet's determine who makes the first move.");
     const firstMoveData = FairRandom.generateNumber(this.hmacKey, 2);
     console.log(`I selected a random value in the range 0..1 (HMAC=${firstMoveData.hmac}).`);
     console.log("Try to guess my selection.");
     console.log("0 - 0\n1 - 1\nX - exit\n? - help");
-    
+
     const userGuess = await this.ask("Your selection: ");
     if (userGuess.toUpperCase() === "X") return this.exitGame();
     if (userGuess.toUpperCase() === "?") return console.log("Help: Guess 0 or 1."), this.startGame();
-    
+
     console.log(`My selection: ${firstMoveData.value} (KEY=${this.hmacKey.toString('hex')}).`);
-    
+
     const playerStarts = parseInt(userGuess, 10) === firstMoveData.value;
     console.log(playerStarts ? "You guessed correctly! You go first." : "I make the first move.");
 
@@ -85,7 +85,7 @@ class DiceGame {
       console.log("\n--- New Round ---");
       const playerRoll = await this.rollDice(1);
       const computerRoll = await this.rollDice(2);
-      
+
       console.log(`Final Results -> You: ${playerRoll}, Computer: ${computerRoll}`);
       if (playerRoll > computerRoll) {
         console.log("You win this round!");
@@ -105,20 +105,32 @@ class DiceGame {
 
   async rollDice(player) {
     console.log(player === 1 ? "It's time for your roll." : "It's time for my roll.");
-    const rollData = FairRandom.generateNumber(this.hmacKey, 6);
-    console.log(`I selected a random value in the range 0..5 (HMAC=${rollData.hmac}).`);
-    console.log("Add your number modulo 6.");
-    console.log("0 - 0\n1 - 1\n2 - 2\n3 - 3\n4 - 4\n5 - 5\nX - exit\n? - help");
-    
-    const userChoice = await this.ask("Your selection: ");
-    if (userChoice.toUpperCase() === "X") return this.exitGame();
-    if (userChoice.toUpperCase() === "?") return console.log("Help: Choose a number between 0 and 5."), this.rollDice(player);
-    
-    const userNum = parseInt(userChoice, 10);
-    console.log(`My number is ${rollData.value} (KEY=${this.hmacKey.toString('hex')}).`);
-    const finalRoll = (rollData.value + userNum) % 6;
-    console.log(`The fair number generation result is ${rollData.value} + ${userNum} = ${finalRoll} (mod 6).`);
+
+    const diceIndex = player === 1 ? await this.chooseDice() : FairRandom.generateNumber(this.hmacKey, this.diceConfigs.length).value;
+    const diceSides = this.diceConfigs[diceIndex];
+
+    console.log(`Using Dice ${diceIndex + 1}: [${diceSides.join(", ")}]`);
+
+    const rollData = FairRandom.generateNumber(this.hmacKey, diceSides.length);
+    const finalRoll = diceSides[rollData.value];
+
+    console.log(`I selected a random index (${rollData.value}) (HMAC=${rollData.hmac}).`);
+    console.log(`Rolled value: ${finalRoll} (KEY=${this.hmacKey.toString('hex')}).`);
+
     return finalRoll;
+  }
+
+  async chooseDice() {
+    console.log("Choose your dice:");
+    this.diceConfigs.forEach((config, i) => console.log(`${i} - [${config.join(", ")}]`));
+
+    while (true) {
+      const choice = await this.ask("Your selection: ");
+      if (choice.toUpperCase() === "X") this.exitGame();
+      const index = parseInt(choice, 10);
+      if (!isNaN(index) && index >= 0 && index < this.diceConfigs.length) return index;
+      console.log("Invalid choice. Try again.");
+    }
   }
 
   ask(question) {
@@ -152,6 +164,7 @@ console.log(`\nDice configurations: ${JSON.stringify(diceConfigs)}`);
 
 const game = new DiceGame(diceConfigs);
 game.startGame();
+
 
 
 
